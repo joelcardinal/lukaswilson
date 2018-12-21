@@ -1,0 +1,551 @@
+<html lang="en">
+<head>
+<title>Game</title>
+<meta charset="utf-8">
+<style>
+	.noClick {
+		cursor: wait;
+	    pointer-events: none;
+	}
+	body {
+		cursor: pointer;
+		pointer-events: all;
+	}
+	.flexWrap {
+		display: flex;
+		flex-flow: row wrap;
+		place-content: flex-start center;
+		align-items: stretch;
+		height: 100%;
+		width: 100%;
+		flex-grow: 1;
+		vertical-align: baseline;
+	}
+	.flexCenter {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		position: relative;
+		text-align: center;
+		vertical-align: baseline;
+	}
+	#start {
+		font-size: 24px;
+		font-weight: bold;
+		color: #aeff5c;
+		background-color: #000;
+		border: none;
+		border-radius: 5px;
+		padding: 5px 10px;
+		-webkit-box-shadow: 14px 14px 14px -6px rgba(255,0,0,1);
+		-moz-box-shadow: 14px 14px 14px -6px rgba(255,0,0,1);
+		box-shadow: 14px 14px 14px -6px rgba(255,0,0,1);
+		cursor: pointer;
+		outline: none;
+		transition: transform 0.23s;
+	}
+	#start:hover {
+		color: rgba(255,0,0,1);
+	}
+	#start:active {
+		margin: 10px 0 0 10px;
+		-webkit-box-shadow: 4px 4px 4px -6px rgba(255,0,0,1);
+		-moz-box-shadow: 4px 4px 4px -6px rgba(255,0,0,1);
+		box-shadow: 4px 4px 4px -6px rgba(255,0,0,1);
+		cursor: pointer;
+	}
+</style>
+</head>
+<body>
+	<div class="flexWrap">
+		<div class="flexCenter">
+			<div style="display:none;" id="noSupport">Your browser does not support SpeechSynthesis or SpeechRecognition.  No fun for you!  Try using recent Chrome on desktop.</div>
+			<div style="display:none;" id="output"></div>
+			<!-- TODO Button should stick to cursor if you click off button, and if hit key change text to don't push buttons? -->
+			<button type="button" style="display:none;" id="start">Don't Click This!!!</button>
+			<select style="display:none;" id="lang" name="lang">
+				<option value="en-GB" selected></option>
+			</select>
+		</div>
+	</div>
+<script>	
+(function(){
+// TODO remove global exposure
+// add aria-disable true when can't click?
+// multi-browser support and api checks, currently only for non-mobile Chrome
+// logic or external script to use translation service
+// do something funny with name like reverse it?  Re-order story input?
+window.app = {
+	data: {
+		synth : window.speechSynthesis,
+		langElem : document.getElementById('lang'),
+		voices : {},
+		translations : {},
+		responseAction : function(){},
+		speechResult : '',
+		recognition : function(){},
+		utterance : {},
+		playerName : '',
+		giantStoryInput : []
+	},
+	api: {
+		init: function(){
+			if(!'speechSynthesis' in window || !('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)){
+				document.getElementById('noSupport').style.display = 'block';
+				return
+			}else{
+				var button = document.getElementById('start');
+				button.style.display = 'block';
+				document.addEventListener('mousemove', function(ev){
+					button.style.transform = 'translateY('+(ev.clientY-160)+'px)';
+					button.style.transform += 'translateX('+(ev.clientX-650)+'px)';            
+				},false);
+			}
+
+			app.api.setRecognition();
+			// user response handler
+			window.addEventListener('recognitionOnResult',function(e){
+				app.data.responseAction(e.detail.speechResult);
+			});
+			// need user to interact with button to init sound, Google audio API rules
+			document.getElementById('start').addEventListener('click',function(e){
+				e.stopPropagation();
+				app.api.getVoices();
+				e.target.style.display = 'none';
+			});
+		},
+		setRecognition : function(){
+			var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+			var recognition = app.data.recognition = new SpeechRecognition();
+		    recognition.lang = 'en-US';
+		    //recognition.interimResults = false;
+		    //recognition.maxAlternatives = 1;
+			recognition.onresult = function(e) {
+				var speechResult = app.data.speechResult = e.results[0][0].transcript.toLowerCase();
+				console.log(app.data.speechResult);
+				if (window.CustomEvent) {
+				  var event = new CustomEvent('recognitionOnResult', {detail: {speechResult: speechResult}});
+				} else {
+				  var event = document.createEvent('CustomEvent');
+				  event.initCustomEvent('recognitionOnResult', true, true, {speechResult: speechResult});
+				}
+				window.dispatchEvent(event);
+			}
+		    recognition.onspeechend = function() {
+		      	recognition.stop();
+		        document.querySelector('body').classList.remove('noClick');
+				console.log('SpeechRecognition.onspeechend');
+		  	}
+		    recognition.onerror = function(event) {
+		        document.querySelector('body').classList.remove('noClick');
+		    }
+		    recognition.onaudiostart = function(event) {
+		        //Fired when the user agent has started to capture audio.
+		        console.log('SpeechRecognition.onaudiostart');
+		    }
+
+		    recognition.onaudioend = function(event) {
+		        //Fired when the user agent has finished capturing audio.
+		        console.log('SpeechRecognition.onaudioend');
+		    }
+
+		    recognition.onend = function(event) {
+				if(!app.data.speechResult.trim()){
+					app.api.speak({textKey:app.data.translations.error});
+				}
+				document.querySelector('body').classList.remove('noClick');
+		        //Fired when the speech recognition service has disconnected.
+		        console.log('SpeechRecognition.onend');
+		    }
+
+		    recognition.onnomatch = function(event) {
+		        //Fired when the speech recognition service returns a final result with no significant recognition. This may involve some degree of recognition, which doesn't meet or exceed the confidence threshold.
+		        console.log('SpeechRecognition.onnomatch');
+		    }
+
+		    recognition.onsoundstart = function(event) {
+		        //Fired when any sound — recognisable speech or not — has been detected.
+		        console.log('SpeechRecognition.onsoundstart');
+		    }
+
+		    recognition.onsoundend = function(event) {
+		        //Fired when any sound — recognisable speech or not — has stopped being detected.
+		        console.log('SpeechRecognition.onsoundend');
+		    }
+
+		    recognition.onspeechstart = function (event) {
+		        //Fired when sound that is recognised by the speech recognition service as speech has been detected.
+		        console.log('SpeechRecognition.onspeechstart');
+		    }
+		    recognition.onstart = function(event) {
+		        //Fired when the speech recognition service has begun listening to incoming audio with intent to recognize grammars associated with the current SpeechRecognition.
+		        console.log('SpeechRecognition.onstart');
+		    }
+		},
+		setVoices : function(voices){
+		    for(var i = 0, len = voices.length; i < len; i++) {
+		      if(voices[i].name === 'Google UK English Male') {
+				  app.data.voices.jenkins = voices[i];
+		      }
+		    }
+			app.api.getTranslations();
+		},
+		getVoices : function(){
+			var browserVoices = app.data.synth.getVoices();
+			if(browserVoices.length){
+				app.api.setVoices(browserVoices);
+			}else{
+				// In chrome the browser loads voices async, so you have to wait for onvoiceschanged
+				window.speechSynthesis.onvoiceschanged = function() {
+					// we only want to use setVoices once but onvoiceschanged is fired with each speech use
+					if(!Object.keys(app.data.voices).length){
+				    	app.api.setVoices(browserVoices);
+					}
+				};
+			}
+		},
+		getTranslations : function(){
+			var lang = app.data.langElem.value || 'en-GB';
+			fetch('translations/'+lang+'.json')
+				.then(function(response) {
+					return response.json();
+				})
+				.then(function(myJson) {
+					app.data.translations = myJson;
+					app.api.Game.start();
+				});
+			
+		},
+		getRandom : function(arr){
+			return arr[Math.floor(Math.random()*arr.length)];
+		},
+		getText : function(textKey){
+			if(textKey && textKey.length){
+				return app.api.getRandom(textKey);
+			}else{
+				return app.api.getRandom(app.data.translations.error);
+			}
+		},
+		updateText : function(text, subArr){
+			function replacer() {
+				return subArr[Number(arguments[1].trim())];
+			}
+			return text.replace(/{{([^}}]+)?}}/g, replacer);
+		},
+		speak : function (obj){
+			return new Promise(function(resolve, reject) {
+				document.querySelector('body').classList.add('noClick');
+				var outputText = app.api.getText(obj.textKey);
+			    if (app.data.synth.speaking) {
+					//resolve(true);
+					reject(Error('speechSynthesis.speaking dropping request'));
+			        return
+			    }
+			    if (outputText) {
+					// TODO show outputText?
+					outputText = app.api.updateText(outputText,obj.substitutions);
+			    	var utterThis = new SpeechSynthesisUtterance(outputText);
+			    	utterThis.onend = function (event) {
+						document.querySelector('body').classList.remove('noClick');
+			        	console.log('SpeechSynthesisUtterance.onend');
+						resolve(true);
+			    	}
+			    	utterThis.onerror = function (event) {
+						document.querySelector('body').classList.remove('noClick');
+						reject(Error('SpeechSynthesisUtterance.onerror'));
+			    	}
+					utterThis.voice = obj.voice || app.data.voices.jenkins;
+			    	utterThis.pitch = obj.pitch || 1;
+			    	utterThis.rate = obj.rate || .9;
+					// why we store the utterance in a variable:
+					// https://stackoverflow.com/questions/23483990/speechsynthesis-api-onend-callback-not-working
+					app.data.utterance = utterThis;
+			    	app.data.synth.speak(utterThis);
+					console.log(utterThis);
+			  	}else{
+					console.error('No outputText found.');
+			  		resolve(true);
+			  	}
+			});
+		},
+		setPlayerStep : function(stepName){
+			var playerData = app.api.db('read');
+			playerData.step = stepName;
+			app.api.db('update',playerData);
+		},
+		goToLastSavedPlayerStep : function(){
+			var playerData = app.api.db('read');
+			app.api.Game[playerData.step];
+		},
+		createPlayer : function(){
+			app.data.playerName = JSON.parse(JSON.stringify(app.data.speechResult));
+			app.api.db('create');
+		},
+		db : function(crudAction,playerData){
+			if(crudAction === 'create'){
+				window.localStorage.setItem(app.data.playerName,JSON.stringify({step:'storyTime'}));
+			}else if('read'){
+				return JSON.parse(window.localStorage.getItem(app.data.playerName));
+			}else if('update'){
+				window.localStorage.setItem(app.data.playerName,JSON.stringify(playerData));
+			}else if('delete'){
+				window.localStorage.removeItem(app.data.playerName);
+			}else if('clear'){
+				window.localStorage.clear();
+			}else{
+				console.error('crudAction not found');
+			}
+		},
+		showButton : function(){
+			document.getElementById('start').style.display = 'block';
+			app.api.Game.start();
+		},
+		notYouAgain : function(){
+			app.api.speak({textKey:app.data.translations.notYouAgain.what,substitutions:[app.data.playerName]})
+				.then(function(r) {
+					app.api.Game.giantStoryAdj1();
+				});
+		},
+		Game : {
+			start : function(){
+				// NOTE: {textKey:app.data.translations.start.helloWorld,substitutions:[],voice:null,pitch:null,rate:null}
+				app.api.speak({textKey:app.data.translations.start.helloWorld})
+					.then(function(r) {
+						return app.api.speak({textKey:app.data.translations.start.askName})
+					}).then(function(r) {
+						document.querySelector('body').addEventListener('click',function(e){
+							// listen
+							document.querySelector('body').classList.add('noClick');
+							app.data.recognition.start();
+						});
+						app.data.responseAction = function(){
+							var name = JSON.parse(JSON.stringify(app.data.speechResult));
+							if(window.localStorage.getItem(name)){
+								app.data.playerName = name;
+								return app.api.notYouAgain();
+							}
+							app.api.Game.name();
+						}
+						return app.api.speak({textKey:app.data.translations.start.clickToSpeak});
+					});
+			},
+			name : function(){
+				app.api.createPlayer();
+				app.api.speak({textKey:app.data.translations.name.nameResponse,substitutions:[app.data.speechResult,'Wow']})
+					.then(function(r) {
+						app.data.responseAction = function(){
+							app.api.Game.nameConfirm();
+						}
+						return app.api.speak({textKey:app.data.translations.name.nameConfirm});
+					});
+			},
+			nameConfirm : function(){
+				if(/no/.test(app.data.speechResult)){
+					app.api.speak({textKey:app.data.translations.name.stateAgain})
+						.then(function(r) {
+							app.data.responseAction = function(){
+								var name = JSON.parse(JSON.stringify(app.data.speechResult));
+								if(window.localStorage.getItem(name)){
+									app.data.playerName = name;
+									return app.api.notYouAgain();
+								}
+								app.api.createPlayer();
+								app.api.Game.storyTime();
+							}
+							return app.api.speak({textKey:app.data.translations.start.askName})
+						});
+				}else{
+					app.api.Game.storyTime();
+				}
+			},
+			storyTime : function(){
+				app.api.speak({textKey:app.data.translations.name.restateName,substitutions:[app.data.playerName]})
+					.then(function(r) {
+						return app.api.speak({textKey:app.data.translations.name.myName})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.name.storyTime,substitutions:[app.data.playerName]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStoryInput.entertain})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStoryInput.input})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStoryInput.makeMeLaugh})
+					}).then(function(r) {
+						app.api.Game.giantStoryAdj1();
+					});
+			},
+			/*
+				-Adj
+				-Adj
+				-Place
+				-Plural Noun
+				-Adj
+				-Body part
+				-Body part
+				-Adj
+				- Body part
+				-Something you eat
+				- Noun
+				- Noun
+				-Adj
+				Adj
+				Adj
+			*/
+			giantStoryAdj1 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultAdjective));
+					app.api.Game.giantStoryAdj2();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.adjective1})
+			},
+			giantStoryAdj2 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultAdjective));
+					app.api.Game.giantStoryPlace();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.adjective2})
+			},
+			giantStoryPlace : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultPlace));
+					app.api.Game.giantStoryPluralNoun();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.place})
+			},
+			giantStoryPluralNoun : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultPluralNoun));
+					app.api.Game.giantStoryAdj3();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.pluralNoun})
+			},
+			giantStoryAdj3 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultAdjective));
+					app.api.Game.giantStoryBodyPart1();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.adjective2})
+			},
+			giantStoryBodyPart1 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultBodyPart));
+					app.api.Game.giantStoryBodyPart2();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.bodyPart})
+			},
+			giantStoryBodyPart2 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultBodyPart));
+					app.api.Game.giantStoryAdj4();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.bodyPart})
+			},
+			giantStoryAdj4 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultAdjective));
+					app.api.Game.giantStoryBodyPart3();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.adjective2})
+			},
+			giantStoryBodyPart3 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultBodyPart));
+					app.api.Game.giantStoryEat();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.bodyPart})
+			},
+			giantStoryEat : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultEat));
+					app.api.Game.giantStoryNoun1();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.eat})
+			},
+			giantStoryNoun1 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultNoun));
+					app.api.Game.giantStoryNoun2();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.noun})
+			},
+			giantStoryNoun2 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultNoun));
+					app.api.Game.giantStoryAdj5();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.noun})
+			},
+			giantStoryAdj5 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultAdjective));
+					app.api.Game.giantStoryAdj6();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.adjective2})
+			},
+			giantStoryAdj6 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultAdjective));
+					app.api.Game.giantStoryAdj7();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.adjective2})
+			},
+			giantStoryAdj7 : function(){
+				app.data.responseAction = function(){
+					app.data.giantStoryInput.push(app.data.speechResult.trim() ? app.data.speechResult : app.api.getRandom(app.data.translations.giantStoryInput.defaultAdjective));
+					app.api.Game.tellStory();
+				}
+				app.api.speak({textKey:app.data.translations.giantStoryInput.adjective2})
+			},
+			tellStory : function(){
+				var arr = app.data.giantStoryInput;
+				app.api.speak({textKey:app.data.translations.giantStory.intro,substitutions:[app.data.playerName]})
+					.then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["1"],substitutions:[arr[0]]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["2"]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["3"],substitutions:[arr[1],arr[2],arr[3]]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["4"],substitutions:[arr[4],arr[5]]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["5"],substitutions:[arr[6]]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["6"],substitutions:[arr[7],arr[8]]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["7"],substitutions:[arr[9]]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["8"],substitutions:[arr[10],arr[11]]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["9"]})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.giantStory["10"],substitutions:[arr[12],arr[13],arr[14]]})
+					}).then(function(r) {
+						app.api.Game.terminating();
+					})
+			},
+			terminating : function(){
+				var arr = app.data.giantStoryInput;
+				app.api.speak({textKey:app.data.translations.end.bad,substitutions:[arr[5]]})
+					.then(function(r) {
+						return app.api.speak({textKey:app.data.translations.end.eraseStory})
+					}).then(function(r) {
+						return app.api.speak({textKey:app.data.translations.end.terminating,substitutions:[arr[8]]})
+					}).then(function(r) {
+						app.api.showButton();
+					})
+			}
+		}
+	}
+};
+
+
+if (document.attachEvent ? document.readyState === "complete" : document.readyState !== "loading"){
+    app.api.init();
+} else {
+    document.addEventListener('DOMContentLoaded', app.api.init);
+}
+
+})(window)
+</script>
+</body>
+</html>
